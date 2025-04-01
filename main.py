@@ -28,7 +28,7 @@ load_dotenv()
 
 GOOGLE_APPLICATION_CREDENTIALS = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
 storage_client = storage.Client()
-BUCKET_NAME = 'flask-image-storage'
+BUCKET_NAME = 'cot5930-project-storage'
 
 # Cloud Storage Configuration
 
