@@ -47,13 +47,12 @@ def health_check():
         return "✅ GCS is accessible.", 200
     except Exception as e:
         return f"❌ GCS access failed: {e}", 500
-
 @app.route("/")
 def index():
     bucket = storage_client.bucket(BUCKET_NAME)
-    blobs = list(bucket.list_blobs())  # Convert iterator to a list
+    blobs = list(bucket.list_blobs())  # Ensure we get all images
 
-    print(f"✅ Retrieved {len(blobs)} images")  # Debugging output
+    print(f"✅ Retrieved {len(blobs)} images") 
 
     index_html = """
     <form method="post" enctype="multipart/form-data" action="/upload">
@@ -66,7 +65,7 @@ def index():
     """
 
     new_image_list = "<ul>"
-    for blob in blobs:  # No iterator issue now!
+    for blob in blobs:
         if blob.name.endswith((".jpg", ".jpeg", ".png")):
             json_filename = blob.name.rsplit('.', 1)[0] + '-json.json'
             try:
@@ -89,11 +88,28 @@ def index():
                 </form>
             </li>
             '''
-
     new_image_list += "</ul>"
     return index_html + new_image_list
 
+@app.route('/download/<filename>')
+def download_file(filename):  # Rename function to avoid conflicts
+    bucket = storage_client.bucket(BUCKET_NAME)
+    blob = bucket.blob(filename)
+    
+    try:
+        file_data = blob.download_as_bytes()
+        print(f"✅ Successfully fetched {filename} for download")
 
+        # Set Content-Disposition to force file download
+        headers = {
+            "Content-Disposition": f"attachment; filename={filename}",
+            "Content-Type": blob.content_type if blob.content_type else "application/octet-stream"
+        }
+
+        return Response(file_data, headers=headers)
+    except Exception as e:
+        print(f"❌ Error retrieving file {filename}: {e}")
+        return "Error retrieving file", 500
 
 @app.route("/upload", methods=["POST"])
 def upload():
@@ -104,16 +120,23 @@ def upload():
     if file.filename == "":
         return "No selected file", 400
 
-    upload_to_gcs(BUCKET_NAME, file)
-    blob = storage_client.bucket(BUCKET_NAME).blob(file.filename)
-    save_info(blob)
+    bucket = storage_client.bucket(BUCKET_NAME)
+    blob = bucket.blob(file.filename)
+    
+    try:
+        file.seek(0)
+        blob.upload_from_file(file)
+        print(f"✅ Successfully uploaded {blob.name} to Cloud Storage.")
 
-    # Dynamically generate the correct URL for Cloud Run
-    image_url = request.host_url + url_for('serve_file', filename=blob.name)
+        # Generate title & description *immediately* after upload
+        save_info(blob)
 
-    print(f"✅ Generated dynamic image URL: {image_url}")  # Debugging output
+    except Exception as e:
+        print(f"❌ Upload failed: {e}")
+        return "Error uploading file", 500
 
     return redirect("/")
+
 
 @app.route("/files")
 def list_files():
@@ -138,8 +161,6 @@ def get_blobs_urls():
     except Exception as e:
         print(f"❌ Error while fetching blobs: {e}")
         return []
-    
-from flask import request, url_for
 
 def generate_title_description(blob):
     print(f"--- Generating title and description for image: {blob.name} ---")
@@ -148,11 +169,10 @@ def generate_title_description(blob):
         print("❌ API key is missing!")
         return "Error", "Error"
 
-    # Dynamically generate the correct URL (works in local and Cloud Run)
+    # Dynamically get correct Flask URL instead of hardcoding localhost
     image_url = request.host_url + url_for('serve_file', filename=blob.name)
 
     try:
-        # Download the image via Flask instead of direct storage access
         response = requests.get(image_url)
         if response.status_code != 200:
             print(f"❌ Error fetching image content from Flask serve endpoint: {response.status_code}")
@@ -164,10 +184,10 @@ def generate_title_description(blob):
         # Image processing using PIL
         try:
             image = Image.open(io.BytesIO(response.content))
-            image.verify()  # Validate the image format
+            image.verify()  
             image = image.convert("RGB")
 
-            # ✅ Resize image before sending it to AI
+            # ✅ Resize BEFORE sending to AI to prevent Cloud Run crashes
             image = image.resize((512, 512))
 
             print("✅ Image verified and resized successfully with PIL.")
@@ -179,11 +199,13 @@ def generate_title_description(blob):
         client = genai.Client(api_key=api_key)
         title_response = client.models.generate_content(model="gemini-2.0-flash", contents=[image, "Generate a single, short title for this image."])
         description_response = client.models.generate_content(model="gemini-2.0-flash", contents=[image, "Generate a short, one-sentence description of this image."])
+
         return title_response.text, description_response.text
 
     except Exception as e:
         print(f"❌ Failed AI processing: {e}")
         return "Error fetching title", "Error fetching description"
+
 
 def save_info(blob):
     title, description = generate_title_description(blob)
