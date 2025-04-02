@@ -1,5 +1,5 @@
 import os
-from flask import Flask, request, redirect
+from flask import Flask, request, redirect, Response
 from google.cloud import storage
 import datetime
 import requests
@@ -95,7 +95,7 @@ def index():
             <li><strong>Title: </strong>{title}</li>
             <li><strong>Description: </strong>{description}</li>
             <li>
-                <form action="/download" method="GET">
+                <form action="/download/{blob.name}" method="GET">
                     <input type="hidden" name="file_url" value="{access_url}">
                     <button type="submit">Download</button>
                 </form>
@@ -105,10 +105,27 @@ def index():
     new_image_list += "</ul>"
     return index_html + new_image_list
 
-@app.route("/download", methods=["GET"])
-def download():
-    file_url = request.args.get("file_url")
-    return redirect(file_url)
+@app.route('/download/<filename>')
+def serve_file(filename):
+    bucket = storage_client.bucket(BUCKET_NAME)
+    blob = bucket.blob(filename)
+    
+    try:
+        file_data = blob.download_as_bytes()
+        print(f"✅ Successfully fetched {filename} for download")
+
+        # Set Content-Disposition to force file download
+        headers = {
+            "Content-Disposition": f"attachment; filename={filename}",
+            "Content-Type": blob.content_type if blob.content_type else "application/octet-stream"
+        }
+
+        return Response(file_data, headers=headers)
+    except Exception as e:
+        print(f"❌ Error retrieving file {filename}: {e}")
+        return "Error retrieving file", 500
+
+
 
 @app.route("/upload", methods=["POST"])
 def upload():
@@ -192,7 +209,14 @@ def generate_title_description(blob):
     try:
         response = requests.get(signed_url)
         if response.status_code == 200:
-            image = Image.open(io.BytesIO(response.content))
+            try:
+                image = Image.open(io.BytesIO(response.content))
+                image.verify()  # Check if it's a valid image
+                image = image.convert("RGB")  # Ensure it's a standard format
+            except Exception as e:
+                print(f"❌ Image verification failed: {e}")
+                return "Error fetching title", "Error fetching description"
+
             client = genai.Client(api_key=api_key)
             title_response = client.models.generate_content(model="gemini-2.0-flash", contents=[image, "Generate a single, short title for this image."])
             description_response = client.models.generate_content(model="gemini-2.0-flash", contents=[image, "Generate a short, one-sentence description of this image."])
@@ -202,21 +226,6 @@ def generate_title_description(blob):
             return "Error fetching title", "Error fetching description"
     except Exception as e:
         print(f"❌ Failed AI processing: {e}")
-        return "Error fetching title", "Error fetching description"
-
-
-    signed_url = generate_private_url(blob)
-    if not signed_url:
-        return "Error", "Error"
-
-    response = requests.get(signed_url)
-    if response.status_code == 200:
-        image = Image.open(io.BytesIO(response.content))
-        client = genai.Client(api_key=api_key)
-        title_response = client.models.generate_content(model="gemini-2.0-flash", contents=[image, "Generate a single, short title for this image."])
-        description_response = client.models.generate_content(model="gemini-2.0-flash", contents=[image, "Generate a short, one-sentence description of this image."])
-        return title_response.text, description_response.text
-    else:
         return "Error fetching title", "Error fetching description"
 
 def save_info(blob):
