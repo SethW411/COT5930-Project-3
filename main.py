@@ -29,20 +29,18 @@ def serve_file(filename):
     bucket = storage_client.bucket(BUCKET_NAME)
     blob = bucket.blob(filename)
 
-    try:
-        print(f"✅ Attempting to fetch {filename} from Cloud Storage.")
+    if not blob.exists():
+        print(f"❌ File {filename} not found in Cloud Storage.")
+        return "File not found", 404
 
-        file_data = blob.download_as_bytes()
-        print(f"✅ Successfully fetched {filename}, size: {len(file_data)} bytes")
+    file_data = blob.download_as_bytes()
+    print(f"✅ Successfully fetched {filename}, size: {len(file_data)} bytes")
 
-        headers = {
-            "Content-Type": blob.content_type if blob.content_type else "application/octet-stream"
-        }
+    headers = {
+        "Content-Type": blob.content_type if blob.content_type else "application/octet-stream"
+    }
 
-        return Response(file_data, headers=headers)
-    except Exception as e:
-        print(f"❌ Error retrieving file {filename}: {e}")
-        return "Error retrieving file", 500
+    return Response(file_data, headers=headers)  # No redirect needed!
 
 @app.route("/MyHealthCheck")
 def health_check():
@@ -199,20 +197,20 @@ def generate_title_description(blob):
     try:
         image_download_start = time.time()
         print("⏳ image request sent!")
-        response = requests.get(image_url, allow_redirects=False)
-        image_download_end = time.time()
 
+        response = requests.get(image_url, allow_redirects=True, timeout=10)
+        image_download_end = time.time()
         print(f"⏳ Image download took {image_download_end - image_download_start:.2f} seconds.")
 
         if response.status_code != 200:
             print(f"❌ Error fetching image content: {response.status_code}")
             return "Error fetching title", "Error fetching description"
 
-        if not response.content or len(response.content) < 500:  # Ensure valid content
+        if not response.content or len(response.content) < 500:
             print("❌ Image content is empty or too small.")
             return "Error fetching title", "Error fetching description"
 
-        print(f"✅Image downloaded successfully, size: {len(response.content)} bytes")
+        print(f"✅ Image downloaded successfully, size: {len(response.content)} bytes")
 
     except Exception as e:
         print(f" ❌ Image retrieval failed: {e}")
