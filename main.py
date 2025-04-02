@@ -8,7 +8,6 @@ from PIL import Image
 import io
 import json
 from google.api_core.exceptions import GoogleAPIError
-from google.auth import default
 
 app = Flask(__name__)
 
@@ -23,23 +22,22 @@ def generate_private_url(blob, expiration_minutes=2):
     Options: signed URL, token-based access, internal-only routing, etc.
     """
     try:
-        credentials, _ = default()
-        print(f"Generating IAM-signed URL for: {blob.name}")
-        return blob.generate_signed_url(
+        print(f"Generating access URL for: {blob.name}")
+        url = blob.generate_signed_url(
             version="v4",
             expiration=datetime.timedelta(minutes=expiration_minutes),
-            method="GET",
-            credentials=credentials  # Enables IAM signing
+            method="GET"
         )
+        return url
     except Exception as e:
-        print(f"❌ Failed to generate signed URL: {e}")
+        print(f"Error generating access URL for {blob.name}: {e}")
         return None
 
 @app.route("/hello")
 def hello_world():
     return "Hello, World!"
 
-@app.route("/healthz")
+@app.route("/MyHealthCheck")
 def health_check():
     try:
         bucket = storage_client.bucket(BUCKET_NAME)
