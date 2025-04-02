@@ -7,37 +7,38 @@ from google import genai
 from PIL import Image
 import io
 import json
+import cv2
+import numpy as np
 from google.api_core.exceptions import GoogleAPIError
-
 
 app = Flask(__name__)
 storage_client = storage.Client()
 BUCKET_NAME = 'cot5930-project-storage'
 api_key = os.getenv("GOOGLE_API_KEY")
 
-# ----> URL generation strategy: centralized for flexibility <---- #
-def generate_private_url(blob, expiration_minutes=2):
-    if blob.exists():
-        print(f"✅ Providing direct Cloud Storage URL for {blob.name} by default.")
-        return f"https://storage.googleapis.com/{BUCKET_NAME}/{blob.name}"
-
-    try:
-        print(f"🔄 Attempting to generate a signed URL for {blob.name} as fallback.")
-        url = blob.generate_signed_url(
-            version="v4",
-            expiration=datetime.timedelta(minutes=expiration_minutes),
-            method="GET"
-        )
-        return url
-    except Exception as e:
-        print(f"❌ Error generating signed URL for {blob.name}: {e}")
-        print(f"❌ No valid access to {blob.name}. Returning None.")
-        return None
-
-
 @app.route("/hello")
 def hello_world():
     return "Hello, World!"
+
+@app.route('/serve/<filename>')
+def serve_file(filename):
+    bucket = storage_client.bucket(BUCKET_NAME)
+    blob = bucket.blob(filename)
+
+    try:
+        print(f"✅ Attempting to fetch {filename} from Cloud Storage.")
+
+        file_data = blob.download_as_bytes()
+        print(f"✅ Successfully fetched {filename}, size: {len(file_data)} bytes")
+
+        headers = {
+            "Content-Type": blob.content_type if blob.content_type else "application/octet-stream"
+        }
+
+        return Response(file_data, headers=headers)
+    except Exception as e:
+        print(f"❌ Error retrieving file {filename}: {e}")
+        return "Error retrieving file", 500
 
 @app.route("/MyHealthCheck")
 def health_check():
@@ -73,11 +74,8 @@ def index():
 
     for blob in blobs:
         if blob.name.endswith((".jpg", ".jpeg", ".png")):
-            access_url = generate_private_url(blob)
-            if not access_url:
-                continue
-
             json_filename = blob.name.rsplit('.', 1)[0] + '-json.json'
+
             try:
                 json_blob = bucket.blob(json_filename)
                 json_data = json_blob.download_as_string()
@@ -90,12 +88,11 @@ def index():
                 description = "No description"
 
             new_image_list += f'''
-            <li><img src="{access_url}" alt="Uploaded Image" width="200"></li>
+            <li><img src="/serve/{blob.name}" alt="Uploaded Image" width="200"></li>
             <li><strong>Title: </strong>{title}</li>
             <li><strong>Description: </strong>{description}</li>
             <li>
                 <form action="/download/{blob.name}" method="GET">
-                    <input type="hidden" name="file_url" value="{access_url}">
                     <button type="submit">Download</button>
                 </form>
             </li>
@@ -103,28 +100,6 @@ def index():
 
     new_image_list += "</ul>"
     return index_html + new_image_list
-
-@app.route('/download/<filename>')
-def serve_file(filename):
-    bucket = storage_client.bucket(BUCKET_NAME)
-    blob = bucket.blob(filename)
-    
-    try:
-        file_data = blob.download_as_bytes()
-        print(f"✅ Successfully fetched {filename} for download")
-
-        # Set Content-Disposition to force file download
-        headers = {
-            "Content-Disposition": f"attachment; filename={filename}",
-            "Content-Type": blob.content_type if blob.content_type else "application/octet-stream"
-        }
-
-        return Response(file_data, headers=headers)
-    except Exception as e:
-        print(f"❌ Error retrieving file {filename}: {e}")
-        return "Error retrieving file", 500
-
-
 
 @app.route("/upload", methods=["POST"])
 def upload():
@@ -135,7 +110,7 @@ def upload():
     if file.filename == "":
         return "No selected file", 400
 
-    upload_url = upload_to_gcs(BUCKET_NAME, file)
+    upload_to_gcs(BUCKET_NAME, file)
     blob = storage_client.bucket(BUCKET_NAME).blob(file.filename)
     save_info(blob)
     return redirect("/")
@@ -149,49 +124,22 @@ def upload_to_gcs(bucket_name, file):
     blob = bucket.blob(file.filename)
     file.seek(0)
     blob.upload_from_file(file)
-
-    # Default: Provide direct Cloud Storage URL
-    if blob.exists():
-        print(f"✅ Providing direct Cloud Storage URL for {blob.name}.")
-        return f"https://storage.googleapis.com/{BUCKET_NAME}/{blob.name}"
-
-    # Fallback: Generate signed URL if direct access fails
-    try:
-        url = generate_private_url(blob)
-        print(f"🔄 Attempting to generate signed URL for {blob.name} as fallback.")
-        return url
-    except Exception as e:
-        print(f"❌ Error generating signed URL for {blob.name}: {e}")
-        return None
-
-
+    
+    print(f"✅ Uploaded {blob.name} to Cloud Storage.")
+    return f"https://storage.googleapis.com/{BUCKET_NAME}/{blob.name}"
 
 def get_blobs_urls():
     print("🟡 Entered get_blobs_urls()")
     try:
         bucket = storage_client.bucket(BUCKET_NAME)
         blobs = bucket.list_blobs(max_results=5)
-
-        image_urls = []
-        for blob in blobs:
-            if blob.name.endswith((".jpg", ".jpeg", ".png")):
-                try:
-                    url = generate_private_url(blob)
-                    image_urls.append(url)
-                except Exception as e:
-                    print(f"❌ Error generating URL for {blob.name}: {e}")
-                    if blob.exists():
-                        print(f"Fallback: Providing direct Cloud Storage URL.")
-                        image_urls.append(f"https://storage.googleapis.com/{BUCKET_NAME}/{blob.name}")
-                    else:
-                        print(f"No valid access to {blob.name}. Skipping.")
+        
+        image_urls = [f"/serve/{blob.name}" for blob in blobs if blob.name.endswith((".jpg", ".jpeg", ".png"))]
         return image_urls
     except Exception as e:
         print(f"❌ Error while fetching blobs: {e}")
         return []
-
-import cv2
-import numpy as np
+    
 def generate_title_description(blob):
     print(f"--- Generating title and description for image: {blob.name} ---")
 
@@ -199,35 +147,29 @@ def generate_title_description(blob):
         print("❌ API key is missing!")
         return "Error", "Error"
 
-    # Default: Use direct Cloud Storage URL
-    signed_url = f"https://storage.googleapis.com/{BUCKET_NAME}/{blob.name}"
-    if not blob.exists():
-        print("⚠️ Direct access failed, trying signed URL as fallback.")
-        signed_url = generate_private_url(blob)
-
-        if not signed_url:
-            print("❌ No valid access to the image for AI processing.")
-            return "Error", "Error"
+    # Use Flask's serve endpoint to get the image
+    image_url = f"http://localhost:8080/serve/{blob.name}"  # Adjust for Cloud Run URL if needed
 
     try:
-        response = requests.get(signed_url)
+        # Download the image using Flask instead of Google Cloud Storage URL
+        response = requests.get(image_url)
         if response.status_code != 200:
-            print(f"❌ Error fetching image content: {response.status_code}")
+            print(f"❌ Error fetching image content from Flask serve endpoint: {response.status_code}")
             return "Error fetching title", "Error fetching description"
 
         print(f"✅ Image downloaded successfully, size: {len(response.content)} bytes")
         print(f"Detected MIME type: {response.headers.get('Content-Type')}")
 
-        # Attempt image verification
+        # Image processing: Attempt PIL first
         try:
             image = Image.open(io.BytesIO(response.content))
-            image.verify()  # Ensure it's a valid image
-            image = image.convert("RGB")  # Convert to a standard format
+            image.verify()
+            image = image.convert("RGB")
             print("✅ Image verified successfully with PIL.")
         except Exception as e:
             print(f"❌ PIL failed to verify image: {e}")
             print("⚠️ Attempting OpenCV fallback...")
-            
+
             try:
                 image_array = np.frombuffer(response.content, dtype=np.uint8)
                 image = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
@@ -251,12 +193,13 @@ def generate_title_description(blob):
         return "Error fetching title", "Error fetching description"
 
 
+
 def save_info(blob):
     title, description = generate_title_description(blob)
     json_filename = blob.name.rsplit('.', 1)[0] + '-json.json'
     info = json.dumps({"title": title, "description": description})
     storage_client.bucket(BUCKET_NAME).blob(json_filename).upload_from_string(info, content_type='application/json')
-    print(f"Info saved as {json_filename} in Cloud Storage.")
+    print(f"✅ Info saved as {json_filename} in Cloud Storage.")
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080, debug=True)
