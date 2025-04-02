@@ -1,7 +1,6 @@
 import os
-from flask import Flask, request, redirect, Response
+from flask import Flask, request, redirect, Response, url_for
 from google.cloud import storage
-import datetime
 import requests
 from google import genai
 from PIL import Image
@@ -9,7 +8,7 @@ import io
 import json
 import cv2
 import numpy as np
-from google.api_core.exceptions import GoogleAPIError
+
 
 app = Flask(__name__)
 storage_client = storage.Client()
@@ -51,31 +50,25 @@ def health_check():
 
 @app.route("/")
 def index():
-    image_urls = get_blobs_urls()
-    print(f"✅ Retrieved {len(image_urls)} image URLs")
+    bucket = storage_client.bucket(BUCKET_NAME)
+    blobs = list(bucket.list_blobs())  # Convert iterator to a list
+
+    print(f"✅ Retrieved {len(blobs)} images")  # Debugging output
 
     index_html = """
     <form method="post" enctype="multipart/form-data" action="/upload">
-        <div>
-            <label for="file">Choose file to upload</label>
-            <input type="file" id="file" name="form_file" accept="image/jpeg"/>
-        </div>
-        <div>
-            <button>Submit</button>
-        </div>
+        <label for="file">Choose file to upload</label>
+        <input type="file" id="file" name="form_file" accept="image/jpeg"/>
+        <button>Submit</button>
     </form>
     <h2>Uploaded Images</h2>
     <ul>
     """
 
-    bucket = storage_client.bucket(BUCKET_NAME)
-    blobs = bucket.list_blobs()
     new_image_list = "<ul>"
-
-    for blob in blobs:
+    for blob in blobs:  # No iterator issue now!
         if blob.name.endswith((".jpg", ".jpeg", ".png")):
             json_filename = blob.name.rsplit('.', 1)[0] + '-json.json'
-
             try:
                 json_blob = bucket.blob(json_filename)
                 json_data = json_blob.download_as_string()
@@ -84,8 +77,7 @@ def index():
                 description = json_info.get("description", "No description found")
             except Exception as e:
                 print(f"Error retrieving JSON for {blob.name}: {e}")
-                title = "No title"
-                description = "No description"
+                title, description = "No title", "No description"
 
             new_image_list += f'''
             <li><img src="/serve/{blob.name}" alt="Uploaded Image" width="200"></li>
@@ -101,6 +93,8 @@ def index():
     new_image_list += "</ul>"
     return index_html + new_image_list
 
+
+
 @app.route("/upload", methods=["POST"])
 def upload():
     if "form_file" not in request.files:
@@ -113,6 +107,12 @@ def upload():
     upload_to_gcs(BUCKET_NAME, file)
     blob = storage_client.bucket(BUCKET_NAME).blob(file.filename)
     save_info(blob)
+
+    # Dynamically generate the correct URL for Cloud Run
+    image_url = request.host_url + url_for('serve_file', filename=blob.name)
+
+    print(f"✅ Generated dynamic image URL: {image_url}")  # Debugging output
+
     return redirect("/")
 
 @app.route("/files")
@@ -124,9 +124,8 @@ def upload_to_gcs(bucket_name, file):
     blob = bucket.blob(file.filename)
     file.seek(0)
     blob.upload_from_file(file)
-    
     print(f"✅ Uploaded {blob.name} to Cloud Storage.")
-    return f"https://storage.googleapis.com/{BUCKET_NAME}/{blob.name}"
+
 
 def get_blobs_urls():
     print("🟡 Entered get_blobs_urls()")
@@ -140,6 +139,8 @@ def get_blobs_urls():
         print(f"❌ Error while fetching blobs: {e}")
         return []
     
+from flask import request, url_for
+
 def generate_title_description(blob):
     print(f"--- Generating title and description for image: {blob.name} ---")
 
@@ -147,11 +148,11 @@ def generate_title_description(blob):
         print("❌ API key is missing!")
         return "Error", "Error"
 
-    # Use Flask's serve endpoint to get the image
-    image_url = f"http://localhost:8080/serve/{blob.name}"  # Adjust for Cloud Run URL if needed
+    # Dynamically generate the correct URL (works in local and Cloud Run)
+    image_url = request.host_url + url_for('serve_file', filename=blob.name)
 
     try:
-        # Download the image using Flask instead of Google Cloud Storage URL
+        # Download the image via Flask instead of direct storage access
         response = requests.get(image_url)
         if response.status_code != 200:
             print(f"❌ Error fetching image content from Flask serve endpoint: {response.status_code}")
@@ -160,27 +161,19 @@ def generate_title_description(blob):
         print(f"✅ Image downloaded successfully, size: {len(response.content)} bytes")
         print(f"Detected MIME type: {response.headers.get('Content-Type')}")
 
-        # Image processing: Attempt PIL first
+        # Image processing using PIL
         try:
             image = Image.open(io.BytesIO(response.content))
-            image.verify()
+            image.verify()  # Validate the image format
             image = image.convert("RGB")
-            print("✅ Image verified successfully with PIL.")
+
+            # ✅ Resize image before sending it to AI
+            image = image.resize((512, 512))
+
+            print("✅ Image verified and resized successfully with PIL.")
         except Exception as e:
             print(f"❌ PIL failed to verify image: {e}")
-            print("⚠️ Attempting OpenCV fallback...")
-
-            try:
-                image_array = np.frombuffer(response.content, dtype=np.uint8)
-                image = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
-
-                if image is None:
-                    raise ValueError("⚠️ OpenCV could not decode the image.")
-
-                print("✅ Image successfully verified using OpenCV.")
-            except Exception as e:
-                print(f"❌ OpenCV also failed: {e}")
-                return "Error fetching title", "Error fetching description"
+            return "Error fetching title", "Error fetching description"
 
         # AI processing
         client = genai.Client(api_key=api_key)
@@ -191,8 +184,6 @@ def generate_title_description(blob):
     except Exception as e:
         print(f"❌ Failed AI processing: {e}")
         return "Error fetching title", "Error fetching description"
-
-
 
 def save_info(blob):
     title, description = generate_title_description(blob)
