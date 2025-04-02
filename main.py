@@ -160,6 +160,16 @@ def get_blobs_urls():
         print(f"❌ Error while fetching blobs: {e}")
         return []
     
+
+
+def ensure_jpeg_format(image):
+    if image.format != "JPEG":
+        print(f"🔄 Converting image from {image.format} to JPEG...")
+        image = image.convert("RGB")  # Ensures compatibility
+        image.save("converted_image.jpg", format="JPEG")  # Save as JPEG
+    return image
+
+    
 def generate_title_description(blob):
     print(f"--- Generating title and description for image: {blob.name} ---")
     start_time = time.time()
@@ -199,6 +209,8 @@ def generate_title_description(blob):
         print("🔍 Attempting to open image with PIL...")
         image_bytes = io.BytesIO(response.content)
         image = Image.open(image_bytes)
+        image = ensure_jpeg_format(image)  # Convert if needed
+
         print("✅ PIL successfully opened the image.")
 
         if image.format not in ["JPEG", "PNG"]:
