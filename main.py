@@ -2,7 +2,7 @@ import os
 import io
 import json
 import time
-from flask import Flask, request, redirect, Response, url_for
+from flask import Flask, request, redirect, Response, url_for, send_file
 from google.cloud import storage
 from google import genai
 from PIL import Image
@@ -38,7 +38,7 @@ def index():
                 print(f"❌ Error retrieving JSON for {blob.name}: {e}")
 
             index_html += f'''
-            <li><img src="/serve/{blob.name}" alt="Uploaded Image" width="200"></li>
+            <li><img src="/image/{blob.name}" alt="Uploaded Image" width="200"></li>
             <li><strong>Title:</strong> {json_info.get("title")}</li>
             <li><strong>Description:</strong> {json_info.get("description")}</li>
             <li><form action="/download/{blob.name}" method="GET">
@@ -47,6 +47,20 @@ def index():
     index_html += "</ul>"
     return index_html
 
+@app.route("/image/<filename>")
+def serve_image(filename):
+    bucket = storage_client.bucket(BUCKET_NAME)
+    blob = bucket.blob(filename)
+
+    try:
+        image_data = blob.download_as_bytes()
+        return send_file(
+            io.BytesIO(image_data),
+            mimetype="image/jpeg"
+        )
+    except Exception as e:
+        return f"Error loading image: {e}", 404
+        
 @app.route("/upload", methods=["POST"])
 def upload():
     print("🔍 Received upload request.")
