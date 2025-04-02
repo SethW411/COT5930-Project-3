@@ -115,29 +115,25 @@ def download_file(filename):  # Rename function to avoid conflicts
 
 @app.route("/upload", methods=["POST"])
 def upload():
+    print("🔍 Received upload request.")  # Log request start
+
     if "form_file" not in request.files:
+        print("❌ No file found in request.")
         return "No file uploaded", 400
 
     file = request.files["form_file"]
     if file.filename == "":
+        print("❌ Empty file received.")
         return "No selected file", 400
 
-    bucket = storage_client.bucket(BUCKET_NAME)
-    blob = bucket.blob(file.filename)
+    print(f"✅ Received file: {file.filename}")
+    upload_to_gcs(BUCKET_NAME, file)
     
-    try:
-        file.seek(0)
-        blob.upload_from_file(file)
-        print(f"✅ Successfully uploaded {blob.name} to Cloud Storage.")
-
-        # Generate title & description *immediately* after upload
-        save_info(blob)
-
-    except Exception as e:
-        print(f"❌ Upload failed: {e}")
-        return "Error uploading file", 500
+    blob = storage_client.bucket(BUCKET_NAME).blob(file.filename)
+    save_info(blob)
 
     return redirect("/")
+
 
 
 @app.route("/files")
@@ -175,7 +171,7 @@ def generate_title_description(blob):
     image_url = request.host_url + url_for('serve_file', filename=blob.name)
 
     try:
-        # 🟡 Log how long image retrieval takes
+        # 🟡 Log image retrieval time
         image_download_start = time.time()
         response = requests.get(image_url)
         image_download_end = time.time()
@@ -185,6 +181,11 @@ def generate_title_description(blob):
             print(f"❌ Error fetching image content: {response.status_code}")
             return "Error fetching title", "Error fetching description"
 
+        # ✅ **NEW: Validate image content before opening**
+        if not response.content or len(response.content) < 500:  # Ensures image data exists
+            print("❌ Image content is empty or too small.")
+            return "Error fetching title", "Error fetching description"
+
         print(f"✅ Image downloaded successfully, size: {len(response.content)} bytes")
         print(f"Detected MIME type: {response.headers.get('Content-Type')}")
 
@@ -192,13 +193,22 @@ def generate_title_description(blob):
         image_processing_start = time.time()
         try:
             print("🔍 Attempting to open image with PIL...")
-            image = Image.open(io.BytesIO(response.content))
+            
+            # ✅ Convert the response content to bytes and reopen it
+            image_bytes = io.BytesIO(response.content)
+            image = Image.open(image_bytes)
+            
             print("✅ PIL successfully opened the image.")
+            
+            # ✅ Validate format BEFORE processing
+            print("🔍 Checking image format...")
+            if image.format not in ["JPEG", "PNG"]:
+                print(f"❌ Unsupported image format: {image.format}")
+                return "Error fetching title", "Error fetching description"
 
-            print("🔍 Verifying image integrity...")
-            image.verify()
-            print("✅ Image verification passed.")
+            print(f"✅ Image format detected: {image.format}")
 
+            # ✅ Convert the image correctly
             print("🔍 Converting image to RGB format...")
             image = image.convert("RGB")
             print("✅ Image converted to RGB.")
@@ -206,24 +216,31 @@ def generate_title_description(blob):
             print("🔍 Resizing image for AI processing...")
             image = image.resize((512, 512))
             print("✅ Image resized successfully.")
+
         except Exception as e:
             print(f"❌ PIL image processing failed: {e}")
             return "Error fetching title", "Error fetching description"
+
 
         image_processing_end = time.time()
         print(f"⏳ Image processing took {image_processing_end - image_processing_start:.2f} seconds.")
 
         # 🟡 Log AI processing time
         ai_start = time.time()
-        print("🔍 Sending image to AI model for title generation...")
-        client = genai.Client(api_key=api_key)
-        title_response = client.models.generate_content(model="gemini-2.0-flash", contents=[image, "Generate a single, short title for this image."])
-        print("✅ AI title generation complete.")
+        try:
+            print("🔍 Sending image to AI model for title generation...")
+            client = genai.Client(api_key=api_key)
+            title_response = client.models.generate_content(model="gemini-2.0-flash", contents=[image, "Generate a single, short title for this image."])
+            print("✅ AI title generation complete.")
 
-        print("🔍 Sending image to AI model for description generation...")
-        description_response = client.models.generate_content(model="gemini-2.0-flash", contents=[image, "Generate a short, one-sentence description of this image."])
-        print("✅ AI description generation complete.")
-        
+            print("🔍 Sending image to AI model for description generation...")
+            description_response = client.models.generate_content(model="gemini-2.0-flash", contents=[image, "Generate a short, one-sentence description of this image."])
+            print("✅ AI description generation complete.")
+            
+        except Exception as e:
+            print(f"❌ AI processing failed: {e}")
+            return "Error fetching title", "Error fetching description"
+
         ai_end = time.time()
         print(f"⏳ AI processing took {ai_end - ai_start:.2f} seconds.")
 
@@ -235,7 +252,6 @@ def generate_title_description(blob):
     except Exception as e:
         print(f"❌ Failed AI processing: {e}")
         return "Error fetching title", "Error fetching description"
-
 
 
 def save_info(blob):
