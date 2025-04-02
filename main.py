@@ -23,7 +23,7 @@ import io
 import json
 from google.api_core.exceptions import GoogleAPIError
 
-storage_client = storage.Client()
+storage_client = storage.Client.from_service_account_json('path_to_service_account_key.json')
 BUCKET_NAME = 'cot5930-project-storage'
 
 # Cloud Storage Configuration
