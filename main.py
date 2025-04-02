@@ -22,8 +22,6 @@ from PIL import Image
 import io
 import json
 from google.auth import default
-from google.auth.exceptions import DefaultCredentialsError
-from google.cloud.exceptions import NotFound, Forbidden
 
 storage_client = storage.Client()
 BUCKET_NAME = 'cot5930-project-storage'
@@ -48,57 +46,47 @@ def health_check():
     try:
         print("🔎 Starting health check...")
 
-        # Step 1: Check credentials
-        credentials, _ = default()
-        print(f"✅ Credentials loaded: {credentials.__class__.__name__}")
-
-        # Step 2: Check if bucket is accessible
-        bucket = storage_client.bucket(BUCKET_NAME)
-        if not bucket:
-            print("❌ Bucket object could not be created.")
-            return "❌ Failed to access bucket object", 500
-        print(f"✅ Bucket object created: {BUCKET_NAME}")
-
-        # Step 3: Try to generate a signed URL on a dummy blob
-        dummy_blob = bucket.blob("health-check-dummy.txt")
+        # Step 1: Load credentials
         try:
-            url = dummy_blob.generate_signed_url(
+            from google.auth import default
+            credentials, _ = default()
+            print(f"✅ Credentials loaded: {credentials.__class__.__name__}")
+        except Exception as e:
+            print("❌ Failed to load credentials.")
+            print(f"⚠️ Credentials error: {e}")
+            return "❌ Health check failed: Couldn't load credentials", 500
+
+        # Step 2: Access bucket
+        try:
+            bucket = storage_client.bucket(BUCKET_NAME)
+            print(f"✅ Bucket object: {BUCKET_NAME} exists")
+        except Exception as e:
+            print("❌ Failed to access bucket.")
+            print(f"⚠️ Bucket access error: {e}")
+            return "❌ Health check failed: Bucket access error", 500
+
+        # Step 3: Try generating a signed URL
+        try:
+            blob = bucket.blob("health-check-dummy.txt")
+            signed_url = blob.generate_signed_url(
                 version="v4",
                 expiration=datetime.timedelta(minutes=1),
                 method="GET",
-                credentials=credentials  # Required in Cloud Run
+                credentials=credentials
             )
-            print(f"✅ Signed URL generated: {url[:60]}...")
-        except AttributeError as e:
-            print("❌ Cannot sign URL: Missing private key or signing rights.")
-            print(f"⚠️ Error details: {e}")
-            return "❌ Health check failed: Signing not supported", 500
+            print(f"✅ Signed URL generated successfully.")
         except Exception as e:
-            print("❌ Unexpected error during signed URL generation.")
-            print(f"⚠️ Error: {e}")
-            return "❌ Health check failed: Unexpected error signing URL", 500
+            print("❌ Failed to generate signed URL.")
+            print(f"⚠️ Signed URL error: {e}")
+            return "❌ Health check failed: Signed URL error", 500
 
-        return "✅ Health check passed (bucket + signed URL functional)", 200
-
-    except DefaultCredentialsError as e:
-        print("❌ Could not load default credentials.")
-        print(f"⚠️ Error: {e}")
-        return "❌ Health check failed: No default credentials", 500
-
-    except Forbidden as e:
-        print("❌ Permission denied when accessing bucket.")
-        print(f"⚠️ Error: {e}")
-        return "❌ Health check failed: Permission denied", 500
-
-    except NotFound as e:
-        print("❌ Bucket not found.")
-        print(f"⚠️ Error: {e}")
-        return "❌ Health check failed: Bucket not found", 500
+        return "✅ Health check passed (bucket and signed URL working)", 200
 
     except Exception as e:
-        print("❌ Totally unexpected health check failure.")
+        print("❌ Unexpected error in health check.")
         print(f"⚠️ Error: {e}")
         return "❌ Health check failed: Unknown error", 500
+
 
 @app.route('/')
 def index():
