@@ -163,11 +163,24 @@ def get_blobs_urls():
         return {"error": str(e), "image_urls": []}  # Return error context
 
 def ensure_jpeg_format(image):
-    if image.format != "JPEG":
+    print(f"🔍 Detected image format: {image.format}")
+
+    if image.format not in ["JPEG", "JPG"]:
         print(f"🔄 Converting image from {image.format} to JPEG...")
-        image = image.convert("RGB")  # Ensures compatibility
-        image.save("converted_image.jpg", format="JPEG")  # Save as JPEG
+
+        # Convert to RGB for compatibility
+        image = image.convert("RGB")
+
+        # Store in-memory instead of saving locally
+        jpeg_bytes = io.BytesIO()
+        image.save(jpeg_bytes, format="JPEG")
+        jpeg_bytes.seek(0)  # Reset buffer pointer
+
+        # Reload as a PIL Image (this ensures it's properly formatted)
+        image = Image.open(jpeg_bytes)
+
     return image
+
 
     
 def generate_title_description(blob):
@@ -185,7 +198,8 @@ def generate_title_description(blob):
     # ✅ STEP 1: Fetch Image First!
     try:
         image_download_start = time.time()
-        response = requests.get(image_url)
+        print("⏳ image request sent!")
+        response = requests.get(image_url, allow_redirects=False)
         image_download_end = time.time()
 
         print(f"⏳ Image download took {image_download_end - image_download_start:.2f} seconds.")
@@ -198,10 +212,10 @@ def generate_title_description(blob):
             print("❌ Image content is empty or too small.")
             return "Error fetching title", "Error fetching description"
 
-        print(f"✅ Image downloaded successfully, size: {len(response.content)} bytes")
+        print(f"✅Image downloaded successfully, size: {len(response.content)} bytes")
 
     except Exception as e:
-        print(f"❌ Image retrieval failed: {e}")
+        print(f" ❌ Image retrieval failed: {e}")
         return "Error fetching title", "Error fetching description"
 
     # ✅ STEP 2: Open & Process Image AFTER Successfully Fetching It!
