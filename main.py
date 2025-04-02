@@ -31,7 +31,7 @@ def generate_private_url(blob, expiration_minutes=2):
         # Validate Cloud Run's IAM-based access before falling back
         if blob.exists():
             print(f"Cloud Run service can access {blob.name} directly. Providing a GCS URL.")
-            return f"https://storage.cloud.google.com/{BUCKET_NAME}/{blob.name}"
+            return f"https://storage.googleapis.com/{BUCKET_NAME}/{blob.name}"
         else:
             print(f"Cloud Run service cannot access {blob.name}. No valid URL available.")
             return None
