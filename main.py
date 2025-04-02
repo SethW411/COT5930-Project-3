@@ -45,7 +45,7 @@ def hello_world():
 def health_check():
     try:
         test_bucket = storage_client.bucket(BUCKET_NAME)
-        blobs = list(test_bucket.list_blobs(max_results=1))
+        blobs = list(test_bucket.list_blobs(max_results=5))
         return "✅ GCS is accessible.", 200
     except GoogleAPIError as e:
         return f"❌ GCS access failed: {e}", 500
@@ -53,10 +53,8 @@ def health_check():
 @app.route('/')
 def index():
 #   Defines a URL path for the home pagedef index():
-    """Display the upload form and list uploaded images from Cloud Storage."""
-
     image_urls = get_blobs_urls()  # gets all the image URLs from Cloud Storage and stores them in the image_urls variable
-
+    print(f"✅ Retrieved {len(image_urls)} image URLs")
     index_html = """
     <form method="post" enctype="multipart/form-data" action="/upload">
         <div>
@@ -205,17 +203,26 @@ def upload_to_gcs(bucket_name, file):
 
 def get_blobs_urls():
     """Fetch signed URLs of all uploaded images from Google Cloud Storage."""
-    print("Getting image URLs...")
-    bucket = storage_client.bucket(BUCKET_NAME)
-    blobs = bucket.list_blobs()
-    
-    # Generate signed URL for each image
-    image_urls = []
-    for blob in blobs:
-        signed_url = get_signed_url(blob)  # Pass the blob object directly
-        image_urls.append(signed_url)
-    
-    return image_urls
+    print("🟡 Entered get_blobs_urls()")
+
+    try:
+        bucket = storage_client.bucket(BUCKET_NAME)
+        print(f"🟡 Bucket reference created: {BUCKET_NAME}")
+        blobs = bucket.list_blobs(max_results=5)  # Prevents long hangs
+
+        # Generate signed URL for each image
+        image_urls = []
+        for blob in blobs:
+            print(f"📷 Found blob: {blob.name}")
+            signed_url = get_signed_url(blob)
+            image_urls.append(signed_url)
+
+        return image_urls
+
+    except Exception as e:
+        print(f"❌ Error while fetching blobs: {e}")
+        return []
+
 
 def get_signed_url(blob, expiration_minutes=2):
     filename = blob.name.split('/')[-1]
