@@ -83,6 +83,28 @@ def upload():
 
     return redirect("/")
 
+@app.route('/download/<filename>')
+def download_file(filename):
+    """ Allows users to download files from Cloud Storage. """
+    bucket = storage_client.bucket(BUCKET_NAME)
+    blob = bucket.blob(filename)
+
+    try:
+        file_data = blob.download_as_bytes()
+        print(f"✅ Successfully fetched {filename} for download.")
+
+        headers = {
+            "Content-Disposition": f"attachment; filename={filename}",
+            "Content-Type": blob.content_type if blob.content_type else "application/octet-stream"
+        }
+
+        return Response(file_data, headers=headers)
+    
+    except Exception as e:
+        print(f"❌ Error retrieving file {filename}: {e}")
+        return "Error retrieving file", 500
+
+
 def upload_to_gcs(file):
     bucket = storage_client.bucket(BUCKET_NAME)
     blob = bucket.blob(file.filename)
