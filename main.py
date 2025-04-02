@@ -21,6 +21,8 @@ from google import genai
 from PIL import Image
 import io
 import json
+from google.api_core.exceptions import GoogleAPIError
+
 storage_client = storage.Client()
 BUCKET_NAME = 'cot5930-project-storage'
 
@@ -47,7 +49,6 @@ def health_check():
         return "✅ GCS is accessible.", 200
     except GoogleAPIError as e:
         return f"❌ GCS access failed: {e}", 500
-
 
 @app.route('/')
 def index():
@@ -221,10 +222,6 @@ def get_signed_url(blob, expiration_minutes=2):
     print(f"Extracted filename for signed URL: {filename}")  # Log the filename for debugging
 
     # Log the environment variable to check if the credentials are set properly
-    print(f"GOOGLE_APPLICATION_CREDENTIALS is set to: {credentials_path}")
-
-    if not credentials_path:
-        raise Exception("GOOGLE_APPLICATION_CREDENTIALS environment variable is not set!")  # Error if credentials not found
 
     # Now, generate the signed URL
     url = blob.generate_signed_url(
