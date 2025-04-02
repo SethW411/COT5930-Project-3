@@ -160,7 +160,7 @@ def upload_to_gcs(bucket_name, file):
         print(f"❌ Error generating URL for {blob.name}: {e}")
         if blob.exists():
             print(f"Fallback: Providing direct Cloud Storage URL.")
-            return f"https://storage.cloud.google.com/{BUCKET_NAME}/{blob.name}"
+            return f"https://storage.googleapis.com/{BUCKET_NAME}/{blob.name}"
         else:
             print(f"No valid access to {blob.name}. Returning None.")
             return None
@@ -182,7 +182,7 @@ def get_blobs_urls():
                     print(f"❌ Error generating URL for {blob.name}: {e}")
                     if blob.exists():
                         print(f"Fallback: Providing direct Cloud Storage URL.")
-                        image_urls.append(f"https://storage.cloud.google.com/{BUCKET_NAME}/{blob.name}")
+                        image_urls.append(f"https://storage.googleapis.com/{BUCKET_NAME}/{blob.name}")
                     else:
                         print(f"No valid access to {blob.name}. Skipping.")
         return image_urls
