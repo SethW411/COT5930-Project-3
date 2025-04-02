@@ -21,7 +21,9 @@ from google import genai
 from PIL import Image
 import io
 import json
-from google.api_core.exceptions import GoogleAPIError
+from google.auth import default
+from google.auth.exceptions import DefaultCredentialsError
+from google.cloud.exceptions import NotFound, Forbidden
 
 storage_client = storage.Client()
 BUCKET_NAME = 'cot5930-project-storage'
@@ -44,11 +46,59 @@ def hello_world():
 @app.route("/healthz")
 def health_check():
     try:
-        test_bucket = storage_client.bucket(BUCKET_NAME)
-        blobs = list(test_bucket.list_blobs(max_results=5))
-        return "✅ GCS is accessible.", 200
-    except GoogleAPIError as e:
-        return f"❌ GCS access failed: {e}", 500
+        print("🔎 Starting health check...")
+
+        # Step 1: Check credentials
+        credentials, _ = default()
+        print(f"✅ Credentials loaded: {credentials.__class__.__name__}")
+
+        # Step 2: Check if bucket is accessible
+        bucket = storage_client.bucket(BUCKET_NAME)
+        if not bucket:
+            print("❌ Bucket object could not be created.")
+            return "❌ Failed to access bucket object", 500
+        print(f"✅ Bucket object created: {BUCKET_NAME}")
+
+        # Step 3: Try to generate a signed URL on a dummy blob
+        dummy_blob = bucket.blob("health-check-dummy.txt")
+        try:
+            url = dummy_blob.generate_signed_url(
+                version="v4",
+                expiration=datetime.timedelta(minutes=1),
+                method="GET",
+                credentials=credentials  # Required in Cloud Run
+            )
+            print(f"✅ Signed URL generated: {url[:60]}...")
+        except AttributeError as e:
+            print("❌ Cannot sign URL: Missing private key or signing rights.")
+            print(f"⚠️ Error details: {e}")
+            return "❌ Health check failed: Signing not supported", 500
+        except Exception as e:
+            print("❌ Unexpected error during signed URL generation.")
+            print(f"⚠️ Error: {e}")
+            return "❌ Health check failed: Unexpected error signing URL", 500
+
+        return "✅ Health check passed (bucket + signed URL functional)", 200
+
+    except DefaultCredentialsError as e:
+        print("❌ Could not load default credentials.")
+        print(f"⚠️ Error: {e}")
+        return "❌ Health check failed: No default credentials", 500
+
+    except Forbidden as e:
+        print("❌ Permission denied when accessing bucket.")
+        print(f"⚠️ Error: {e}")
+        return "❌ Health check failed: Permission denied", 500
+
+    except NotFound as e:
+        print("❌ Bucket not found.")
+        print(f"⚠️ Error: {e}")
+        return "❌ Health check failed: Bucket not found", 500
+
+    except Exception as e:
+        print("❌ Totally unexpected health check failure.")
+        print(f"⚠️ Error: {e}")
+        return "❌ Health check failed: Unknown error", 500
 
 @app.route('/')
 def index():
@@ -226,16 +276,21 @@ def get_blobs_urls():
 
 def get_signed_url(blob, expiration_minutes=2):
     filename = blob.name.split('/')[-1]
-    print(f"Extracted filename for signed URL: {filename}")  # Log the filename for debugging
+    print(f"Extracted filename for signed URL: {filename}")
 
-    # Log the environment variable to check if the credentials are set properly
+    # Get the default credentials (Cloud Run uses ComputeEngineCredentials)
+    print("Attempting to get default credentials...")
+    credentials, _ = default()
 
-    # Now, generate the signed URL
+    # Generate signed URL using IAM-based credentials
+    print("Generating signed URL...")
     url = blob.generate_signed_url(
         version="v4",
         expiration=datetime.timedelta(minutes=expiration_minutes),
         method="GET",
+        credentials=credentials, 
     )
+    print(f"Generated signed URL: {url}")
     return url
 
 
