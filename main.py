@@ -190,8 +190,12 @@ def get_blobs_urls():
         print(f"❌ Error while fetching blobs: {e}")
         return []
 
+import cv2
+import numpy as np
+
 def generate_title_description(blob):
     print(f"--- Generating title and description for image: {blob.name} ---")
+    
     if not api_key:
         print("❌ API key is missing!")
         return "Error", "Error"
@@ -200,33 +204,55 @@ def generate_title_description(blob):
     signed_url = generate_private_url(blob)
     if not signed_url:
         if blob.exists():
-            signed_url = f"https://storage.cloud.google.com/{BUCKET_NAME}/{blob.name}"
+            signed_url = f"https://storage.googleapis.com/{BUCKET_NAME}/{blob.name}"
             print(f"Fallback: Using direct Cloud Storage URL for AI processing.")
         else:
             print("❌ No valid access to the image for AI processing.")
             return "Error", "Error"
 
     try:
+        # Download the image
         response = requests.get(signed_url)
-        if response.status_code == 200:
-            try:
-                image = Image.open(io.BytesIO(response.content))
-                image.verify()  # Check if it's a valid image
-                image = image.convert("RGB")  # Ensure it's a standard format
-            except Exception as e:
-                print(f"❌ Image verification failed: {e}")
-                return "Error fetching title", "Error fetching description"
-
-            client = genai.Client(api_key=api_key)
-            title_response = client.models.generate_content(model="gemini-2.0-flash", contents=[image, "Generate a single, short title for this image."])
-            description_response = client.models.generate_content(model="gemini-2.0-flash", contents=[image, "Generate a short, one-sentence description of this image."])
-            return title_response.text, description_response.text
-        else:
+        if response.status_code != 200:
             print(f"❌ Error fetching image content: {response.status_code}")
             return "Error fetching title", "Error fetching description"
+
+        print(f"✅ Image downloaded successfully, size: {len(response.content)} bytes")
+        print(f"Detected MIME type: {response.headers.get('Content-Type')}")
+
+        # Attempt to verify and process the image using PIL
+        try:
+            image = Image.open(io.BytesIO(response.content))
+            image.verify()  # Ensure it's a valid image
+            image = image.convert("RGB")  # Convert to a standard format
+            print("✅ Image verified successfully with PIL.")
+        except Exception as e:
+            print(f"❌ PIL failed to verify image: {e}")
+            print("⚠️ Attempting to open image using OpenCV as fallback...")
+            
+            try:
+                # Convert bytes to NumPy array
+                image_array = np.frombuffer(response.content, dtype=np.uint8)
+                image = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
+                
+                if image is None:
+                    raise ValueError("⚠️ OpenCV could not decode the image.")
+                print("✅ Image successfully verified using OpenCV.")
+            except Exception as e:
+                print(f"❌ OpenCV also failed: {e}")
+                return "Error fetching title", "Error fetching description"
+
+        # Send the image to AI processing
+        client = genai.Client(api_key=api_key)
+        title_response = client.models.generate_content(model="gemini-2.0-flash", contents=[image, "Generate a single, short title for this image."])
+        description_response = client.models.generate_content(model="gemini-2.0-flash", contents=[image, "Generate a short, one-sentence description of this image."])
+
+        return title_response.text, description_response.text
+
     except Exception as e:
         print(f"❌ Failed AI processing: {e}")
         return "Error fetching title", "Error fetching description"
+
 
 def save_info(blob):
     title, description = generate_title_description(blob)
