@@ -153,12 +153,12 @@ def get_blobs_urls():
     try:
         bucket = storage_client.bucket(BUCKET_NAME)
         blobs = bucket.list_blobs(max_results=5)
-        
-        image_urls = [f"/serve/{blob.name}" for blob in blobs if blob.name.endswith((".jpg", ".jpeg", ".png"))]
+        image_urls = [f"{request.host_url.rstrip('/')}/serve/{blob.name}" for blob in blobs if blob.name.endswith((".jpg", ".jpeg", ".png"))]
         return image_urls
-    except Exception as e:
-        print(f"❌ Error while fetching blobs: {e}")
-        return []
+except Exception as e:
+    print(f"❌ Error fetching blobs: {e}")
+    return {"error": str(e), "image_urls": []}  # Return error context
+
     
 
 
