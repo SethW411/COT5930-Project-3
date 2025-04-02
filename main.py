@@ -18,7 +18,11 @@ def index():
     blobs = list(bucket.list_blobs())
     print(f"✅ Retrieved {len(blobs)} images") 
 
-    index_html = """<form method="post" enctype="multipart/form-data" action="/upload">
+    index_html = """
+    <style>
+        body { background-color: LIGHTBLUE; font-family: Arial; }
+    </style>
+    <form method="post" enctype="multipart/form-data" action="/upload">
         <label for="file">Choose file to upload</label>
         <input type="file" id="file" name="form_file" accept="image/jpeg"/>
         <button>Submit</button>
