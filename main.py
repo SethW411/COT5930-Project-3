@@ -9,18 +9,14 @@ import io
 import json
 from google.api_core.exceptions import GoogleAPIError
 
-app = Flask(__name__)
 
+app = Flask(__name__)
 storage_client = storage.Client()
 BUCKET_NAME = 'cot5930-project-storage'
 api_key = os.getenv("GOOGLE_API_KEY")
 
 # ----> URL generation strategy: centralized for flexibility <---- #
 def generate_private_url(blob, expiration_minutes=2):
-    """
-    Replace this function to change how private URLs are generated.
-    Options: signed URL, token-based access, internal-only routing, etc.
-    """
     try:
         print(f"Generating access URL for: {blob.name}")
         url = blob.generate_signed_url(
@@ -30,8 +26,15 @@ def generate_private_url(blob, expiration_minutes=2):
         )
         return url
     except Exception as e:
-        print(f"Error generating access URL for {blob.name}: {e}")
-        return None
+        print(f"Error generating signed URL for {blob.name}: {e}")
+
+        # Validate Cloud Run's IAM-based access before falling back
+        if blob.exists():
+            print(f"Cloud Run service can access {blob.name} directly. Providing a GCS URL.")
+            return f"https://storage.cloud.google.com/{BUCKET_NAME}/{blob.name}"
+        else:
+            print(f"Cloud Run service cannot access {blob.name}. No valid URL available.")
+            return None
 
 @app.route("/hello")
 def hello_world():
