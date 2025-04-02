@@ -161,50 +161,79 @@ def get_blobs_urls():
     except Exception as e:
         print(f"❌ Error while fetching blobs: {e}")
         return []
-
+    
 def generate_title_description(blob):
     print(f"--- Generating title and description for image: {blob.name} ---")
+    start_time = time.time()
 
     if not api_key:
         print("❌ API key is missing!")
         return "Error", "Error"
 
-    # Dynamically get correct Flask URL instead of hardcoding localhost
     image_url = request.host_url + url_for('serve_file', filename=blob.name)
 
     try:
+        # 🟡 Log how long image retrieval takes
+        image_download_start = time.time()
         response = requests.get(image_url)
+        image_download_end = time.time()
+        print(f"⏳ Image download took {image_download_end - image_download_start:.2f} seconds.")
+
         if response.status_code != 200:
-            print(f"❌ Error fetching image content from Flask serve endpoint: {response.status_code}")
+            print(f"❌ Error fetching image content: {response.status_code}")
             return "Error fetching title", "Error fetching description"
 
         print(f"✅ Image downloaded successfully, size: {len(response.content)} bytes")
         print(f"Detected MIME type: {response.headers.get('Content-Type')}")
 
-        # Image processing using PIL
+        # 🟡 Log image opening sequence
+        image_processing_start = time.time()
         try:
+            print("🔍 Attempting to open image with PIL...")
             image = Image.open(io.BytesIO(response.content))
-            image.verify()  
+            print("✅ PIL successfully opened the image.")
+
+            print("🔍 Verifying image integrity...")
+            image.verify()
+            print("✅ Image verification passed.")
+
+            print("🔍 Converting image to RGB format...")
             image = image.convert("RGB")
+            print("✅ Image converted to RGB.")
 
-            # ✅ Resize BEFORE sending to AI to prevent Cloud Run crashes
+            print("🔍 Resizing image for AI processing...")
             image = image.resize((512, 512))
-
-            print("✅ Image verified and resized successfully with PIL.")
+            print("✅ Image resized successfully.")
         except Exception as e:
-            print(f"❌ PIL failed to verify image: {e}")
+            print(f"❌ PIL image processing failed: {e}")
             return "Error fetching title", "Error fetching description"
 
-        # AI processing
+        image_processing_end = time.time()
+        print(f"⏳ Image processing took {image_processing_end - image_processing_start:.2f} seconds.")
+
+        # 🟡 Log AI processing time
+        ai_start = time.time()
+        print("🔍 Sending image to AI model for title generation...")
         client = genai.Client(api_key=api_key)
         title_response = client.models.generate_content(model="gemini-2.0-flash", contents=[image, "Generate a single, short title for this image."])
+        print("✅ AI title generation complete.")
+
+        print("🔍 Sending image to AI model for description generation...")
         description_response = client.models.generate_content(model="gemini-2.0-flash", contents=[image, "Generate a short, one-sentence description of this image."])
+        print("✅ AI description generation complete.")
+        
+        ai_end = time.time()
+        print(f"⏳ AI processing took {ai_end - ai_start:.2f} seconds.")
+
+        total_time = time.time() - start_time
+        print(f"⏳ Total execution time: {total_time:.2f} seconds.")
 
         return title_response.text, description_response.text
 
     except Exception as e:
         print(f"❌ Failed AI processing: {e}")
         return "Error fetching title", "Error fetching description"
+
 
 
 def save_info(blob):
