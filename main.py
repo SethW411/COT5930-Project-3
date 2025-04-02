@@ -17,8 +17,12 @@ api_key = os.getenv("GOOGLE_API_KEY")
 
 # ----> URL generation strategy: centralized for flexibility <---- #
 def generate_private_url(blob, expiration_minutes=2):
+    if blob.exists():
+        print(f"✅ Providing direct Cloud Storage URL for {blob.name} by default.")
+        return f"https://storage.googleapis.com/{BUCKET_NAME}/{blob.name}"
+
     try:
-        print(f"Generating access URL for: {blob.name}")
+        print(f"🔄 Attempting to generate a signed URL for {blob.name} as fallback.")
         url = blob.generate_signed_url(
             version="v4",
             expiration=datetime.timedelta(minutes=expiration_minutes),
@@ -26,15 +30,10 @@ def generate_private_url(blob, expiration_minutes=2):
         )
         return url
     except Exception as e:
-        print(f"Error generating signed URL for {blob.name}: {e}")
+        print(f"❌ Error generating signed URL for {blob.name}: {e}")
+        print(f"❌ No valid access to {blob.name}. Returning None.")
+        return None
 
-        # Validate Cloud Run's IAM-based access before falling back
-        if blob.exists():
-            print(f"Cloud Run service can access {blob.name} directly. Providing a GCS URL.")
-            return f"https://storage.googleapis.com/{BUCKET_NAME}/{blob.name}"
-        else:
-            print(f"Cloud Run service cannot access {blob.name}. No valid URL available.")
-            return None
 
 @app.route("/hello")
 def hello_world():
@@ -151,19 +150,20 @@ def upload_to_gcs(bucket_name, file):
     file.seek(0)
     blob.upload_from_file(file)
 
-    # Try generating a signed URL first, then fallback
+    # Default: Provide direct Cloud Storage URL
+    if blob.exists():
+        print(f"✅ Providing direct Cloud Storage URL for {blob.name}.")
+        return f"https://storage.googleapis.com/{BUCKET_NAME}/{blob.name}"
+
+    # Fallback: Generate signed URL if direct access fails
     try:
         url = generate_private_url(blob)
-        print(f"✅ Successfully generated private URL for {blob.name}")
+        print(f"🔄 Attempting to generate signed URL for {blob.name} as fallback.")
         return url
     except Exception as e:
-        print(f"❌ Error generating URL for {blob.name}: {e}")
-        if blob.exists():
-            print(f"Fallback: Providing direct Cloud Storage URL.")
-            return f"https://storage.googleapis.com/{BUCKET_NAME}/{blob.name}"
-        else:
-            print(f"No valid access to {blob.name}. Returning None.")
-            return None
+        print(f"❌ Error generating signed URL for {blob.name}: {e}")
+        return None
+
 
 
 def get_blobs_urls():
@@ -192,26 +192,24 @@ def get_blobs_urls():
 
 import cv2
 import numpy as np
-
 def generate_title_description(blob):
     print(f"--- Generating title and description for image: {blob.name} ---")
-    
+
     if not api_key:
         print("❌ API key is missing!")
         return "Error", "Error"
 
-    # Try fetching the signed URL, then fallback
-    signed_url = generate_private_url(blob)
-    if not signed_url:
-        if blob.exists():
-            signed_url = f"https://storage.googleapis.com/{BUCKET_NAME}/{blob.name}"
-            print(f"Fallback: Using direct Cloud Storage URL for AI processing.")
-        else:
+    # Default: Use direct Cloud Storage URL
+    signed_url = f"https://storage.googleapis.com/{BUCKET_NAME}/{blob.name}"
+    if not blob.exists():
+        print("⚠️ Direct access failed, trying signed URL as fallback.")
+        signed_url = generate_private_url(blob)
+
+        if not signed_url:
             print("❌ No valid access to the image for AI processing.")
             return "Error", "Error"
 
     try:
-        # Download the image
         response = requests.get(signed_url)
         if response.status_code != 200:
             print(f"❌ Error fetching image content: {response.status_code}")
@@ -220,7 +218,7 @@ def generate_title_description(blob):
         print(f"✅ Image downloaded successfully, size: {len(response.content)} bytes")
         print(f"Detected MIME type: {response.headers.get('Content-Type')}")
 
-        # Attempt to verify and process the image using PIL
+        # Attempt image verification
         try:
             image = Image.open(io.BytesIO(response.content))
             image.verify()  # Ensure it's a valid image
@@ -228,25 +226,24 @@ def generate_title_description(blob):
             print("✅ Image verified successfully with PIL.")
         except Exception as e:
             print(f"❌ PIL failed to verify image: {e}")
-            print("⚠️ Attempting to open image using OpenCV as fallback...")
+            print("⚠️ Attempting OpenCV fallback...")
             
             try:
-                # Convert bytes to NumPy array
                 image_array = np.frombuffer(response.content, dtype=np.uint8)
                 image = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
-                
+
                 if image is None:
                     raise ValueError("⚠️ OpenCV could not decode the image.")
+
                 print("✅ Image successfully verified using OpenCV.")
             except Exception as e:
                 print(f"❌ OpenCV also failed: {e}")
                 return "Error fetching title", "Error fetching description"
 
-        # Send the image to AI processing
+        # AI processing
         client = genai.Client(api_key=api_key)
         title_response = client.models.generate_content(model="gemini-2.0-flash", contents=[image, "Generate a single, short title for this image."])
         description_response = client.models.generate_content(model="gemini-2.0-flash", contents=[image, "Generate a short, one-sentence description of this image."])
-
         return title_response.text, description_response.text
 
     except Exception as e:
