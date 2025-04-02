@@ -168,8 +168,9 @@ def generate_title_description(blob):
         print("❌ API key is missing!")
         return "Error", "Error"
 
-    image_url = request.host_url + url_for('serve_file', filename=blob.name)
-    print(f"Image URL recieved: {image_url}")
+    image_url = request.host_url.rstrip("/") + url_for('serve_file', filename=blob.name)
+    print(f"Image URL received: {image_url}")
+
 
     # ✅ STEP 1: Fetch Image First!
     try:
