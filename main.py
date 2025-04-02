@@ -133,14 +133,42 @@ def upload_to_gcs(bucket_name, file):
     blob = bucket.blob(file.filename)
     file.seek(0)
     blob.upload_from_file(file)
-    return generate_private_url(blob)
+
+    # Try generating a signed URL first, then fallback
+    try:
+        url = generate_private_url(blob)
+        print(f"✅ Successfully generated private URL for {blob.name}")
+        return url
+    except Exception as e:
+        print(f"❌ Error generating URL for {blob.name}: {e}")
+        if blob.exists():
+            print(f"Fallback: Providing direct Cloud Storage URL.")
+            return f"https://storage.cloud.google.com/{BUCKET_NAME}/{blob.name}"
+        else:
+            print(f"No valid access to {blob.name}. Returning None.")
+            return None
+
 
 def get_blobs_urls():
     print("🟡 Entered get_blobs_urls()")
     try:
         bucket = storage_client.bucket(BUCKET_NAME)
         blobs = bucket.list_blobs(max_results=5)
-        return [generate_private_url(blob) for blob in blobs if blob.name.endswith((".jpg", ".jpeg", ".png"))]
+
+        image_urls = []
+        for blob in blobs:
+            if blob.name.endswith((".jpg", ".jpeg", ".png")):
+                try:
+                    url = generate_private_url(blob)
+                    image_urls.append(url)
+                except Exception as e:
+                    print(f"❌ Error generating URL for {blob.name}: {e}")
+                    if blob.exists():
+                        print(f"Fallback: Providing direct Cloud Storage URL.")
+                        image_urls.append(f"https://storage.cloud.google.com/{BUCKET_NAME}/{blob.name}")
+                    else:
+                        print(f"No valid access to {blob.name}. Skipping.")
+        return image_urls
     except Exception as e:
         print(f"❌ Error while fetching blobs: {e}")
         return []
@@ -148,8 +176,34 @@ def get_blobs_urls():
 def generate_title_description(blob):
     print(f"--- Generating title and description for image: {blob.name} ---")
     if not api_key:
-        print("API key is missing!")
+        print("❌ API key is missing!")
         return "Error", "Error"
+
+    # Try fetching the signed URL, then fallback
+    signed_url = generate_private_url(blob)
+    if not signed_url:
+        if blob.exists():
+            signed_url = f"https://storage.cloud.google.com/{BUCKET_NAME}/{blob.name}"
+            print(f"Fallback: Using direct Cloud Storage URL for AI processing.")
+        else:
+            print("❌ No valid access to the image for AI processing.")
+            return "Error", "Error"
+
+    try:
+        response = requests.get(signed_url)
+        if response.status_code == 200:
+            image = Image.open(io.BytesIO(response.content))
+            client = genai.Client(api_key=api_key)
+            title_response = client.models.generate_content(model="gemini-2.0-flash", contents=[image, "Generate a single, short title for this image."])
+            description_response = client.models.generate_content(model="gemini-2.0-flash", contents=[image, "Generate a short, one-sentence description of this image."])
+            return title_response.text, description_response.text
+        else:
+            print(f"❌ Error fetching image content: {response.status_code}")
+            return "Error fetching title", "Error fetching description"
+    except Exception as e:
+        print(f"❌ Failed AI processing: {e}")
+        return "Error fetching title", "Error fetching description"
+
 
     signed_url = generate_private_url(blob)
     if not signed_url:
