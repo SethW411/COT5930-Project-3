@@ -16,6 +16,9 @@ app = Flask(__name__)
 storage_client = storage.Client()
 BUCKET_NAME = 'cot5930-project-storage'
 api_key = os.getenv("GOOGLE_API_KEY")
+@app.route("/debug-env")
+def debug_env():
+    return {"GOOGLE_API_KEY": os.getenv("GOOGLE_API_KEY")}
 
 @app.route("/hello")
 def hello_world():
@@ -152,15 +155,12 @@ def get_blobs_urls():
     print("🟡 Entered get_blobs_urls()")
     try:
         bucket = storage_client.bucket(BUCKET_NAME)
-        blobs = bucket.list_blobs(max_results=5)
+        blobs = bucket.list_blobs()
         image_urls = [f"{request.host_url.rstrip('/')}/serve/{blob.name}" for blob in blobs if blob.name.endswith((".jpg", ".jpeg", ".png"))]
         return image_urls
-except Exception as e:
-    print(f"❌ Error fetching blobs: {e}")
-    return {"error": str(e), "image_urls": []}  # Return error context
-
-    
-
+    except Exception as e:
+        print(f"❌ Error fetching blobs: {e}")
+        return {"error": str(e), "image_urls": []}  # Return error context
 
 def ensure_jpeg_format(image):
     if image.format != "JPEG":
