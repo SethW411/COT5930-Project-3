@@ -21,12 +21,6 @@ from google import genai
 from PIL import Image
 import io
 import json
-from dotenv import load_dotenv
-# Load environment variables from .env file
-
-load_dotenv()
-
-GOOGLE_APPLICATION_CREDENTIALS = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
 storage_client = storage.Client()
 BUCKET_NAME = 'cot5930-project-storage'
 
@@ -44,6 +38,15 @@ def hello_world():
     """Return a basic hello world response."""
     return "Hello, World!"
 #   Defines a function that will read "Hello, World!"
+
+@app.route("/healthz")
+def health_check():
+    try:
+        test_bucket = storage_client.bucket(BUCKET_NAME)
+        blobs = list(test_bucket.list_blobs(max_results=1))
+        return "✅ GCS is accessible.", 200
+    except GoogleAPIError as e:
+        return f"❌ GCS access failed: {e}", 500
 
 
 @app.route('/')
@@ -218,7 +221,6 @@ def get_signed_url(blob, expiration_minutes=2):
     print(f"Extracted filename for signed URL: {filename}")  # Log the filename for debugging
 
     # Log the environment variable to check if the credentials are set properly
-    credentials_path = GOOGLE_APPLICATION_CREDENTIALS
     print(f"GOOGLE_APPLICATION_CREDENTIALS is set to: {credentials_path}")
 
     if not credentials_path:
